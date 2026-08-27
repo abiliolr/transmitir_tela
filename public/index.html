@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transmitir Localmente - Host</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-white flex flex-col items-center min-h-screen p-8">
+    <div class="max-w-4xl w-full">
+        <h1 class="text-3xl font-bold mb-4">Host: Transmitir Tela</h1>
+        
+        <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-6">
+            
+            <!-- NOVOS CONTROLES DE QUALIDADE -->
+            <div class="flex flex-wrap gap-4 mb-6">
+                <div>
+                    <label class="block text-sm font-bold mb-2 text-gray-300">Qualidade (Resolução)</label>
+                    <select id="res-select" class="bg-gray-700 text-white rounded p-2 border border-gray-600 focus:outline-none focus:border-blue-500">
+                        <option value="1280x720">720p (Mais leve)</option>
+                        <option value="1920x1080" selected>1080p (Padrão)</option>
+                        <option value="2560x1440">1440p (Alta Qualidade)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-2 text-gray-300">Taxa de Quadros (FPS)</label>
+                    <select id="fps-select" class="bg-gray-700 text-white rounded p-2 border border-gray-600 focus:outline-none focus:border-blue-500">
+                        <option value="30">30 FPS</option>
+                        <option value="60" selected>60 FPS</option>
+                    </select>
+                </div>
+            </div>
+
+            <button id="start-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded w-full sm:w-auto">
+                Selecionar e Transmitir Tela
+            </button>
+            <button id="stop-btn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded hidden w-full sm:w-auto">
+                Parar Transmissão
+            </button>
+            
+            <div id="status" class="mt-4 text-gray-400">Aguardando início da transmissão...</div>
+        </div>
+
+        <div class="bg-black rounded-lg overflow-hidden border border-gray-700">
+            <video id="local-video" class="w-full h-auto" autoplay muted playsinline></video>
+        </div>
+        
+        <div class="mt-6 bg-gray-800 p-4 rounded-lg">
+            <h2 class="text-xl font-semibold mb-2">Viewers Conectados: <span id="viewers-count">0</span></h2>
+            <ul id="viewers-list" class="list-disc pl-5 text-gray-400">
+                <!-- Lista de viewers irá aparecer aqui -->
+            </ul>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/host.js"></script>
+</body>
+</html>
