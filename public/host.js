@@ -1,8 +1,10 @@
 const socket = io();
 const startBtn = document.getElementById('start-btn');
 const stopBtn = document.getElementById('stop-btn');
+const rotateTokenBtn = document.getElementById('rotate-token-btn');
 const localVideo = document.getElementById('local-video');
 const statusText = document.getElementById('status');
+const tokenStatusText = document.getElementById('token-status');
 const viewersCount = document.getElementById('viewers-count');
 const viewersList = document.getElementById('viewers-list');
 
@@ -14,14 +16,28 @@ let localStream;
 // Armazena as conexões peer para cada viewer { viewerId: RTCPeerConnection }
 const peerConnections = {};
 
-// Configuração crucial do WebRTC contendo servidores STUN públicos
-// Essencial para o P2P atravessar NATs e o túnel do Cloudflare
-const rtcConfig = {
+// Configuração do WebRTC contendo STUN e TURN fallback (carregado dinamicamente)
+let rtcConfig = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' }
     ]
 };
+
+async function loadRtcConfig() {
+    try {
+        const res = await fetch('/api/rtc-config');
+        if (res.ok) {
+            const data = await res.json();
+            if (data && data.iceServers) {
+                rtcConfig = data;
+            }
+        }
+    } catch (e) {
+        console.warn('Não foi possível carregar rtcConfig do servidor, usando fallback padrão:', e);
+    }
+}
+loadRtcConfig();
 
 // Ao conectar no servidor, registrar-se como Host
 socket.on('connect', () => {
@@ -67,6 +83,24 @@ startBtn.addEventListener('click', async () => {
 });
 
 stopBtn.addEventListener('click', stopStream);
+
+rotateTokenBtn.addEventListener('click', () => {
+    socket.emit('rotate-token');
+});
+
+socket.on('token-rotated', (data) => {
+    console.log('Novo token recebido:', data.newToken);
+    if (tokenStatusText) {
+        tokenStatusText.textContent = `Novo link de transmissão gerado! (Caminho: ${data.watchPath})`;
+        tokenStatusText.classList.remove('hidden');
+    }
+    // Fechar e limpar peerConnections de viewers desconectados
+    for (let id in peerConnections) {
+        peerConnections[id].close();
+        delete peerConnections[id];
+    }
+    updateViewersUI();
+});
 
 function stopStream() {
     if (localStream) {
