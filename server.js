@@ -13,12 +13,48 @@ const io = new Server(server);
 
 const PORT = 8080;
 // Gerar token alfanumérico aleatório
-const token = crypto.randomBytes(8).toString('hex');
+let token = crypto.randomBytes(8).toString('hex');
 const ROOM_NAME = 'stream-room';
+
+// Função para obter o IP da rede local (LAN)
+function getLocalIp() {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+        for (const iface of interfaces[name]) {
+            if (iface.family === 'IPv4' && !iface.internal) {
+                return iface.address;
+            }
+        }
+    }
+    return 'localhost';
+}
 const MAX_VIEWERS = 8;
 
 // Middleware para servir arquivos estáticos de 'public' (exceto index.html que é o host)
 app.use(express.static('public', { index: false }));
+
+// Rota de configuração WebRTC (STUN / TURN)
+app.get('/api/rtc-config', (req, res) => {
+    const iceServers = [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+    ];
+
+    if (process.env.TURN_URL) {
+        const turnConfig = {
+            urls: process.env.TURN_URL
+        };
+        if (process.env.TURN_USERNAME) {
+            turnConfig.username = process.env.TURN_USERNAME;
+        }
+        if (process.env.TURN_CREDENTIAL) {
+            turnConfig.credential = process.env.TURN_CREDENTIAL;
+        }
+        iceServers.push(turnConfig);
+    }
+
+    res.json({ iceServers });
+});
 
 // Rota raiz: Acesso apenas do Host
 app.get('/', (req, res) => {
@@ -36,6 +72,7 @@ app.get('/watch/:token', (req, res) => {
 // Socket.io - WebRTC signaling
 let hostId = null;
 let viewers = 0;
+let lastCloudflareUrl = null;
 
 io.on('connection', (socket) => {
     console.log(`Nova conexão Socket: ${socket.id}`);
@@ -90,6 +127,62 @@ io.on('connection', (socket) => {
         socket.to(id).emit('ice-candidate', socket.id, message);
     });
 
+    // Evento para o host solicitar rotação do token
+    socket.on('rotate-token', () => {
+        if (socket.id !== hostId) {
+            socket.emit('error', 'Apenas o Host pode alterar o token.');
+            return;
+        }
+
+        // Gerar novo token
+        token = crypto.randomBytes(8).toString('hex');
+        console.log(`\n[Token Rotated] Novo token gerado: ${token}`);
+
+        // Notificar e desconectar todos os viewers conectados
+        const room = io.sockets.adapter.rooms.get(ROOM_NAME);
+        if (room) {
+            for (const socketId of room) {
+                if (socketId !== hostId) {
+                    const viewerSocket = io.sockets.sockets.get(socketId);
+                    if (viewerSocket) {
+                        viewerSocket.emit('error', 'O link de transmissão foi alterado pelo Host.');
+                        viewerSocket.disconnect();
+                    }
+                }
+            }
+        }
+        viewers = 0;
+
+        // Informar o host sobre o novo token
+        socket.emit('token-rotated', {
+            newToken: token,
+            watchPath: `/watch/${token}`
+        });
+
+        // Se houver túnel do Cloudflare rodando, logar o novo link no terminal
+        if (lastCloudflareUrl) {
+            const novoLinkCompleto = `${lastCloudflareUrl}/watch/${token}`;
+            https.get(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(novoLinkCompleto)}`, (resp) => {
+                let linkCurto = '';
+                resp.on('data', chunk => linkCurto += chunk);
+                resp.on('end', () => {
+                    console.log('========================================================');
+                    if (linkCurto.includes('Error')) {
+                        console.log(`NOVO LINK ORIGINAL: ${novoLinkCompleto}`);
+                    } else {
+                        console.log(`NOVO LINK ENCURTADO: ${linkCurto}`);
+                    }
+                    console.log('========================================================\n');
+                });
+            }).on('error', () => {
+                console.log(`NOVO LINK ORIGINAL: ${novoLinkCompleto}\n`);
+            });
+        } else {
+            const localIp = getLocalIp();
+            console.log(`NOVO LINK LOCAL: http://${localIp}:${PORT}/watch/${token}\n`);
+        }
+    });
+
     socket.on('disconnect', () => {
         if (socket.id === hostId) {
             hostId = null;
@@ -113,6 +206,17 @@ server.listen(PORT, () => {
     iniciarCloudflareTunnel();
 });
 
+// Exibir fallback de rede local
+function mostrarFallbackRedeLocal(motivo) {
+    const localIp = getLocalIp();
+    const localWatchUrl = `http://${localIp}:${PORT}/watch/${token}`;
+    console.log('\n========================================================');
+    console.log(`CLOUDFLARED INDISPONÍVEL / FALHOU (${motivo})`);
+    console.log('USANDO MODO DE REDE LOCAL (LAN FALLBACK):');
+    console.log(`Link para assistir na mesma rede: ${localWatchUrl}`);
+    console.log('========================================================\n');
+}
+
 // Automação do Cloudflare Tunnel
 function iniciarCloudflareTunnel() {
     const isWindows = os.platform() === 'win32';
@@ -121,7 +225,15 @@ function iniciarCloudflareTunnel() {
     
     console.log('Iniciando Cloudflare Tunnel...');
     
-    const tunnel = spawn(comandoExato, ['tunnel', '--url', `http://localhost:${PORT}`]);
+    let tunnelCreated = false;
+    let tunnel;
+
+    try {
+        tunnel = spawn(comandoExato, ['tunnel', '--url', `http://localhost:${PORT}`]);
+    } catch (err) {
+        mostrarFallbackRedeLocal(err.message);
+        return;
+    }
 
     // Espião 1: Lê as mensagens normais do Cloudflare
     tunnel.stdout.on('data', (data) => {
@@ -137,7 +249,9 @@ function iniciarCloudflareTunnel() {
         
         const urlMatch = output.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/);
         if (urlMatch) {
-            const cfUrl = urlMatch[0];
+            tunnelCreated = true;
+            lastCloudflareUrl = urlMatch[0];
+            const cfUrl = lastCloudflareUrl;
             const linkCompleto = `${cfUrl}/watch/${token}`;
             
             // Faz o Node.js chamar a API do TinyURL para encurtar o link
@@ -168,9 +282,15 @@ function iniciarCloudflareTunnel() {
 
     tunnel.on('error', (err) => {
         console.error(`Erro ao iniciar Cloudflare Tunnel:`, err.message);
+        if (!tunnelCreated) {
+            mostrarFallbackRedeLocal('Executável não encontrado ou erro de execução');
+        }
     });
 
     tunnel.on('close', (code) => {
         console.log(`Cloudflare tunnel processo encerrado com código ${code}`);
+        if (!tunnelCreated) {
+            mostrarFallbackRedeLocal('Processo encerrado antes de criar o túnel');
+        }
     });
 }

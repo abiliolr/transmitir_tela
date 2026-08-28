@@ -8,13 +8,28 @@ let peerConnection;
 const pathParts = window.location.pathname.split('/');
 const token = pathParts[pathParts.length - 1];
 
-// A mesma configuração de STUN é necessária no viewer
-const rtcConfig = {
+// Configuração de STUN/TURN carregada dinamicamente
+let rtcConfig = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' }
     ]
 };
+
+async function loadRtcConfig() {
+    try {
+        const res = await fetch('/api/rtc-config');
+        if (res.ok) {
+            const data = await res.json();
+            if (data && data.iceServers) {
+                rtcConfig = data;
+            }
+        }
+    } catch (e) {
+        console.warn('Não foi possível carregar rtcConfig do servidor, usando fallback padrão:', e);
+    }
+}
+loadRtcConfig();
 
 socket.on('connect', () => {
     statusText.textContent = 'Autenticando na sala...';
