@@ -11,6 +11,51 @@ const viewersList = document.getElementById('viewers-list');
 // Pegando os seletores da interface
 const resSelect = document.getElementById('res-select');
 const fpsSelect = document.getElementById('fps-select');
+const codecSelect = document.getElementById('codec-select');
+const bitrateSelect = document.getElementById('bitrate-select');
+
+// Verifica suporte de codec do browser e reseta se não suportado
+if (codecSelect) {
+    codecSelect.addEventListener('change', () => {
+        const selectedCodec = codecSelect.value;
+        if (selectedCodec !== 'auto' && RTCRtpReceiver.getCapabilities) {
+            const capabilities = RTCRtpReceiver.getCapabilities('video');
+            const supported = capabilities.codecs.some(codec => codec.mimeType.toLowerCase() === `video/${selectedCodec.toLowerCase()}`);
+            if (!supported) {
+                alert(`O codec ${selectedCodec} não é suportado pelo seu navegador. Selecionando a opção Auto.`);
+                codecSelect.value = 'auto';
+            }
+        }
+    });
+}
+
+// Atualiza bitrate ativamente nas conexões de vídeo
+if (bitrateSelect) {
+    bitrateSelect.addEventListener('change', async () => {
+        const selectedBitrate = bitrateSelect.value;
+        for (let viewerId in peerConnections) {
+            const peerConnection = peerConnections[viewerId];
+            const senders = peerConnection.getSenders();
+            const videoSender = senders.find(sender => sender.track && sender.track.kind === 'video');
+            if (videoSender) {
+                const parameters = videoSender.getParameters();
+                if (!parameters.encodings) {
+                    parameters.encodings = [{}];
+                }
+                if (selectedBitrate === 'auto') {
+                    delete parameters.encodings[0].maxBitrate;
+                } else {
+                    parameters.encodings[0].maxBitrate = parseInt(selectedBitrate) * 1000;
+                }
+                try {
+                    await videoSender.setParameters(parameters);
+                } catch (err) {
+                    console.error(`Erro ao definir bitrate para ${viewerId}:`, err);
+                }
+            }
+        }
+    });
+}
 
 // Extrair roomId da URL
 const pathParts = window.location.pathname.split('/');
@@ -153,8 +198,42 @@ socket.on('viewer-joined', async (viewerId) => {
 
     // Adicionar as tracks de mídia locais na conexão P2P
     localStream.getTracks().forEach(track => {
-        peerConnection.addTrack(track, localStream);
+        const sender = peerConnection.addTrack(track, localStream);
+        // Configura o maxBitrate inicial
+        if (track.kind === 'video') {
+            const selectedBitrate = bitrateSelect ? bitrateSelect.value : 'auto';
+            if (selectedBitrate !== 'auto') {
+                const parameters = sender.getParameters();
+                if (!parameters.encodings) {
+                    parameters.encodings = [{}];
+                }
+                parameters.encodings[0].maxBitrate = parseInt(selectedBitrate) * 1000;
+                sender.setParameters(parameters).catch(e => console.error("Erro ao aplicar maxBitrate inicial", e));
+            }
+        }
     });
+
+    // Configura o Codec de preferência antes de criar a oferta
+    if (codecSelect && codecSelect.value !== 'auto' && RTCRtpTransceiver.prototype.setCodecPreferences) {
+        const selectedCodec = codecSelect.value;
+        const transceivers = peerConnection.getTransceivers();
+        const videoTransceiver = transceivers.find(t => t.sender && t.sender.track && t.sender.track.kind === 'video');
+        if (videoTransceiver) {
+            const capabilities = RTCRtpReceiver.getCapabilities('video');
+            if (capabilities) {
+                // Filtra os codecs que correspondem ao codec selecionado
+                const preferredCodecs = capabilities.codecs.filter(codec => codec.mimeType.toLowerCase() === `video/${selectedCodec.toLowerCase()}`);
+                // Além disso, mantemos os outros codecs como fallback, os colocando no final
+                const otherCodecs = capabilities.codecs.filter(codec => codec.mimeType.toLowerCase() !== `video/${selectedCodec.toLowerCase()}`);
+
+                try {
+                    videoTransceiver.setCodecPreferences([...preferredCodecs, ...otherCodecs]);
+                } catch (e) {
+                    console.error("Erro ao tentar definir preferência de codec", e);
+                }
+            }
+        }
+    }
 
     // Quando o ICE agent encontrar um candidato de rede
     peerConnection.onicecandidate = (event) => {

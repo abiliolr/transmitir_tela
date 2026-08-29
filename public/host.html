@@ -29,6 +29,31 @@
                         <option value="60" selected>60 FPS</option>
                     </select>
                 </div>
+                <div>
+                    <label class="block text-sm font-bold mb-2 text-gray-300">
+                        Codec de Vídeo
+                        <span class="text-blue-400 cursor-help" title="H.264 é mais leve para o PC. VP8/VP9 exigem mais processador, mas compactam melhor a imagem.">(?)</span>
+                    </label>
+                    <select id="codec-select" class="bg-gray-700 text-white rounded p-2 border border-gray-600 focus:outline-none focus:border-blue-500">
+                        <option value="auto" selected>Auto (Padrão)</option>
+                        <option value="VP8">VP8</option>
+                        <option value="VP9">VP9</option>
+                        <option value="H264">H.264</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-2 text-gray-300">
+                        Limite de Bitrate
+                        <span class="text-blue-400 cursor-help" title="Define o limite de banda da internet. Se a live estiver travando (slideshow) para os espectadores, diminua este valor (ex: 2500 kbps).">(?)</span>
+                    </label>
+                    <select id="bitrate-select" class="bg-gray-700 text-white rounded p-2 border border-gray-600 focus:outline-none focus:border-blue-500">
+                        <option value="auto" selected>Automático (Padrão)</option>
+                        <option value="1000">1000 kbps (Baixo)</option>
+                        <option value="2500">2500 kbps (Médio)</option>
+                        <option value="5000">5000 kbps (Alto)</option>
+                        <option value="8000">8000 kbps (Ultra)</option>
+                    </select>
+                </div>
             </div>
 
             <div class="flex flex-wrap gap-2 mb-4">
