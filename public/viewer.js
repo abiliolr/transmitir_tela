@@ -4,9 +4,9 @@ const statusText = document.getElementById('status');
 
 let peerConnection;
 
-// Extrair token da URL
+// Extrair roomId da URL
 const pathParts = window.location.pathname.split('/');
-const token = pathParts[pathParts.length - 1];
+const roomId = pathParts[pathParts.length - 1];
 
 // Configuração de STUN/TURN carregada dinamicamente
 let rtcConfig = {
@@ -33,8 +33,8 @@ loadRtcConfig();
 
 socket.on('connect', () => {
     statusText.textContent = 'Autenticando na sala...';
-    // Avisa o servidor que quer entrar passando o token
-    socket.emit('join-room', token);
+    // Avisa o servidor que quer entrar passando o roomId
+    socket.emit('join-room', roomId);
 });
 
 // Em caso de erro na entrada da sala

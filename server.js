@@ -2,35 +2,19 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
-const os = require('os');
 const path = require('path');
-const https = require('https'); // Adicionado para fazer a requisição do encurtador
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-const PORT = 8080;
-// Gerar token alfanumérico aleatório
-let token = crypto.randomBytes(8).toString('hex');
-const ROOM_NAME = 'stream-room';
-
-// Função para obter o IP da rede local (LAN)
-function getLocalIp() {
-    const interfaces = os.networkInterfaces();
-    for (const name of Object.keys(interfaces)) {
-        for (const iface of interfaces[name]) {
-            if (iface.family === 'IPv4' && !iface.internal) {
-                return iface.address;
-            }
-        }
-    }
-    return 'localhost';
-}
+const PORT = process.env.PORT || 8080;
 const MAX_VIEWERS = 8;
 
-// Middleware para servir arquivos estáticos de 'public' (exceto index.html que é o host)
+// Estado para armazenar dados de cada sala (roomId -> { hostId, viewersCount })
+const rooms = {};
+
+// Middleware para servir arquivos estáticos de 'public' (exceto os HTMLs principais para controle de rota manual)
 app.use(express.static('public', { index: false }));
 
 // Rota de configuração WebRTC (STUN / TURN)
@@ -56,60 +40,73 @@ app.get('/api/rtc-config', (req, res) => {
     res.json({ iceServers });
 });
 
-// Rota raiz: Acesso apenas do Host
+// Nova Rota raiz: Serve a página inicial
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    res.sendFile(path.join(__dirname, 'public', 'home.html'));
 });
 
-// Rota do viewer com validação do token
-app.get('/watch/:token', (req, res) => {
-    if (req.params.token !== token) {
-        return res.status(403).send('Acesso Negado: Token inválido.');
-    }
+// Rota para criar uma nova sala de transmissão
+app.get('/create-room', (req, res) => {
+    const roomId = crypto.randomBytes(4).toString('hex');
+    res.redirect(`/host/${roomId}`);
+});
+
+// Rota para o host da sala
+app.get('/host/:roomId', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'host.html'));
+});
+
+// Rota do viewer para assistir
+app.get('/watch/:roomId', (req, res) => {
+    // É possível colocar validação de existência de sala aqui,
+    // mas também será validado no socket.io
     res.sendFile(path.join(__dirname, 'public', 'watch.html'));
 });
 
-// Socket.io - WebRTC signaling
-let hostId = null;
-let viewers = 0;
-let lastCloudflareUrl = null;
-
+// Socket.io - WebRTC signaling isolado por sala
 io.on('connection', (socket) => {
     console.log(`Nova conexão Socket: ${socket.id}`);
 
-    // Evento para o host se registrar
-    socket.on('register-host', () => {
-        hostId = socket.id;
-        socket.join(ROOM_NAME);
-        console.log(`Host registrado: ${socket.id}`);
+    // Evento para o host se registrar em uma sala específica
+    socket.on('register-host', (roomId) => {
+        if (!rooms[roomId]) {
+            rooms[roomId] = { hostId: null, viewersCount: 0 };
+        }
+
+        // Se já existe um host e ele estiver conectado (opcionalmente derrubar o antigo, mas por simplicidade sobreescrevemos)
+        rooms[roomId].hostId = socket.id;
+        socket.roomId = roomId; // Vincula o socket à sala
+        socket.isHost = true;
+
+        socket.join(roomId);
+        console.log(`Host registrado na sala ${roomId}: ${socket.id}`);
     });
 
-    // Evento para viewers entrarem (handshake inicial)
-    socket.on('join-room', (clientToken) => {
-        if (clientToken !== token) {
-            socket.emit('error', 'Token inválido');
+    // Evento para viewers entrarem em uma sala específica
+    socket.on('join-room', (roomId) => {
+        if (!rooms[roomId] || !rooms[roomId].hostId) {
+            socket.emit('error', 'Sala não existe ou o host ainda não iniciou a transmissão.');
             socket.disconnect();
             return;
         }
 
-        const room = io.sockets.adapter.rooms.get(ROOM_NAME);
-        const numClients = room ? room.size : 0;
+        const roomData = rooms[roomId];
         
-        // Host (1) + Max Viewers (8)
-        if (numClients > MAX_VIEWERS) {
+        if (roomData.viewersCount >= MAX_VIEWERS) {
             socket.emit('error', 'Sala cheia. Máximo de espectadores atingido.');
             socket.disconnect();
             return;
         }
 
-        socket.join(ROOM_NAME);
-        viewers++;
-        console.log(`Viewer conectado: ${socket.id}. Total viewers: ${viewers}`);
+        socket.roomId = roomId;
+        socket.isHost = false;
+        socket.join(roomId);
 
-        // Avisa o host que um novo viewer entrou
-        if (hostId) {
-            io.to(hostId).emit('viewer-joined', socket.id);
-        }
+        roomData.viewersCount++;
+        console.log(`Viewer conectado na sala ${roomId}: ${socket.id}. Total viewers: ${roomData.viewersCount}`);
+
+        // Avisa apenas o host daquela sala que um novo viewer entrou
+        io.to(roomData.hostId).emit('viewer-joined', socket.id);
     });
 
     // Sinalização: Offer
@@ -127,74 +124,24 @@ io.on('connection', (socket) => {
         socket.to(id).emit('ice-candidate', socket.id, message);
     });
 
-    // Evento para o host solicitar rotação do token
-    socket.on('rotate-token', () => {
-        if (socket.id !== hostId) {
-            socket.emit('error', 'Apenas o Host pode alterar o token.');
-            return;
-        }
-
-        // Gerar novo token
-        token = crypto.randomBytes(8).toString('hex');
-        console.log(`\n[Token Rotated] Novo token gerado: ${token}`);
-
-        // Notificar e desconectar todos os viewers conectados
-        const room = io.sockets.adapter.rooms.get(ROOM_NAME);
-        if (room) {
-            for (const socketId of room) {
-                if (socketId !== hostId) {
-                    const viewerSocket = io.sockets.sockets.get(socketId);
-                    if (viewerSocket) {
-                        viewerSocket.emit('error', 'O link de transmissão foi alterado pelo Host.');
-                        viewerSocket.disconnect();
-                    }
-                }
-            }
-        }
-        viewers = 0;
-
-        // Informar o host sobre o novo token
-        socket.emit('token-rotated', {
-            newToken: token,
-            watchPath: `/watch/${token}`
-        });
-
-        // Se houver túnel do Cloudflare rodando, logar o novo link no terminal
-        if (lastCloudflareUrl) {
-            const novoLinkCompleto = `${lastCloudflareUrl}/watch/${token}`;
-            https.get(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(novoLinkCompleto)}`, (resp) => {
-                let linkCurto = '';
-                resp.on('data', chunk => linkCurto += chunk);
-                resp.on('end', () => {
-                    console.log('========================================================');
-                    if (linkCurto.includes('Error')) {
-                        console.log(`NOVO LINK ORIGINAL: ${novoLinkCompleto}`);
-                    } else {
-                        console.log(`NOVO LINK ENCURTADO: ${linkCurto}`);
-                    }
-                    console.log('========================================================\n');
-                });
-            }).on('error', () => {
-                console.log(`NOVO LINK ORIGINAL: ${novoLinkCompleto}\n`);
-            });
-        } else {
-            const localIp = getLocalIp();
-            console.log(`NOVO LINK LOCAL: http://${localIp}:${PORT}/watch/${token}\n`);
-        }
-    });
-
     socket.on('disconnect', () => {
-        if (socket.id === hostId) {
-            hostId = null;
-            console.log('Host desconectado.');
-            // Opcional: avisar viewers que host caiu
-            io.to(ROOM_NAME).emit('host-disconnected');
+        const roomId = socket.roomId;
+        if (!roomId || !rooms[roomId]) return;
+
+        const roomData = rooms[roomId];
+
+        if (socket.isHost) {
+            console.log(`Host da sala ${roomId} desconectado.`);
+            // Avisar viewers daquela sala que o host caiu
+            socket.to(roomId).emit('host-disconnected');
+            // Remove a sala (opcional, ou espera os viewers desconectarem sozinhos)
+            delete rooms[roomId];
         } else {
-            // Se estava na sala, decrementa os viewers (simplificado)
-            viewers--;
-            console.log(`Viewer desconectado: ${socket.id}. Total viewers: ${Math.max(0, viewers)}`);
-            if (hostId) {
-                io.to(hostId).emit('viewer-left', socket.id);
+            roomData.viewersCount = Math.max(0, roomData.viewersCount - 1);
+            console.log(`Viewer desconectado da sala ${roomId}: ${socket.id}. Total viewers: ${roomData.viewersCount}`);
+            // Avisa o host da sala (se ainda existir)
+            if (roomData.hostId) {
+                io.to(roomData.hostId).emit('viewer-left', socket.id);
             }
         }
     });
@@ -202,95 +149,5 @@ io.on('connection', (socket) => {
 
 // Inicia o Servidor Local
 server.listen(PORT, () => {
-    console.log(`Servidor local rodando em http://localhost:${PORT}`);
-    iniciarCloudflareTunnel();
+    console.log(`Servidor rodando na porta ${PORT}`);
 });
-
-// Exibir fallback de rede local
-function mostrarFallbackRedeLocal(motivo) {
-    const localIp = getLocalIp();
-    const localWatchUrl = `http://${localIp}:${PORT}/watch/${token}`;
-    console.log('\n========================================================');
-    console.log(`CLOUDFLARED INDISPONÍVEL / FALHOU (${motivo})`);
-    console.log('USANDO MODO DE REDE LOCAL (LAN FALLBACK):');
-    console.log(`Link para assistir na mesma rede: ${localWatchUrl}`);
-    console.log('========================================================\n');
-}
-
-// Automação do Cloudflare Tunnel
-function iniciarCloudflareTunnel() {
-    const isWindows = os.platform() === 'win32';
-    const cloudflaredCmd = isWindows ? 'cloudflared.exe' : 'cloudflared';
-    const comandoExato = path.join(__dirname, cloudflaredCmd);
-    
-    console.log('Iniciando Cloudflare Tunnel...');
-    
-    let tunnelCreated = false;
-    let tunnel;
-
-    try {
-        tunnel = spawn(comandoExato, ['tunnel', '--url', `http://localhost:${PORT}`]);
-    } catch (err) {
-        mostrarFallbackRedeLocal(err.message);
-        return;
-    }
-
-    // Espião 1: Lê as mensagens normais do Cloudflare
-    tunnel.stdout.on('data', (data) => {
-        console.log(`[Cloudflare]: ${data.toString().trim()}`);
-    });
-
-    // Espião 2: Lê os links e os possíveis erros
-    tunnel.stderr.on('data', (data) => {
-        const output = data.toString();
-        
-        // Mantemos o log para você saber o que está acontecendo
-        console.log(`[Cloudflare Log]: ${output.trim()}`); 
-        
-        const urlMatch = output.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/);
-        if (urlMatch) {
-            tunnelCreated = true;
-            lastCloudflareUrl = urlMatch[0];
-            const cfUrl = lastCloudflareUrl;
-            const linkCompleto = `${cfUrl}/watch/${token}`;
-            
-            // Faz o Node.js chamar a API do TinyURL para encurtar o link
-            https.get(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(linkCompleto)}`, (resp) => {
-                let linkCurto = '';
-                resp.on('data', chunk => linkCurto += chunk);
-                resp.on('end', () => {
-                    console.log('\n========================================================');
-                    // Se o TinyURL também bloquear, ele devolve a palavra "Error"
-                    if (linkCurto.includes('Error')) {
-                        console.log('FALHA AO ENCURTAR (Domínio bloqueado). USE O LINK ORIGINAL:');
-                        console.log(linkCompleto);
-                    } else {
-                        console.log('TUNEL CRIADO E ENCURTADO COM SUCESSO!');
-                        console.log(`Link para enviar aos seus amigos: ${linkCurto}`);
-                    }
-                    console.log('========================================================\n');
-                });
-            }).on('error', (err) => {
-                // Se o encurtador falhar por falha de rede, mostra o link original como plano B
-                console.log('\n========================================================');
-                console.log('FALHA AO ENCURTAR. USE O LINK ORIGINAL ABAIXO:');
-                console.log(linkCompleto);
-                console.log('========================================================\n');
-            });
-        }
-    });
-
-    tunnel.on('error', (err) => {
-        console.error(`Erro ao iniciar Cloudflare Tunnel:`, err.message);
-        if (!tunnelCreated) {
-            mostrarFallbackRedeLocal('Executável não encontrado ou erro de execução');
-        }
-    });
-
-    tunnel.on('close', (code) => {
-        console.log(`Cloudflare tunnel processo encerrado com código ${code}`);
-        if (!tunnelCreated) {
-            mostrarFallbackRedeLocal('Processo encerrado antes de criar o túnel');
-        }
-    });
-}

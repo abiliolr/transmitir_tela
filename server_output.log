@@ -1,0 +1,10 @@
+
+> instant-local-stream@1.0.0 start
+> node server.js
+
+Servidor rodando na porta 8080
+Nova conexão Socket: -3mrZBDBYaefNHp7AAAB
+Host registrado na sala a92467ed: -3mrZBDBYaefNHp7AAAB
+Nova conexão Socket: 20n4UTmU6BEq2kBcAAAD
+Viewer conectado na sala a92467ed: 20n4UTmU6BEq2kBcAAAD. Total viewers: 1
+Host da sala a92467ed desconectado.

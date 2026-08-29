@@ -1,16 +1,41 @@
 const socket = io();
 const startBtn = document.getElementById('start-btn');
 const stopBtn = document.getElementById('stop-btn');
-const rotateTokenBtn = document.getElementById('rotate-token-btn');
+const inviteLinkInput = document.getElementById('invite-link');
+const copyLinkBtn = document.getElementById('copy-link-btn');
 const localVideo = document.getElementById('local-video');
 const statusText = document.getElementById('status');
-const tokenStatusText = document.getElementById('token-status');
 const viewersCount = document.getElementById('viewers-count');
 const viewersList = document.getElementById('viewers-list');
 
 // Pegando os seletores da interface
 const resSelect = document.getElementById('res-select');
 const fpsSelect = document.getElementById('fps-select');
+
+// Extrair roomId da URL
+const pathParts = window.location.pathname.split('/');
+const roomId = pathParts[pathParts.length - 1];
+
+// Preencher o link de convite automaticamente
+const inviteUrl = `${window.location.origin}/watch/${roomId}`;
+if (inviteLinkInput) {
+    inviteLinkInput.value = inviteUrl;
+}
+
+if (copyLinkBtn) {
+    copyLinkBtn.addEventListener('click', () => {
+        inviteLinkInput.select();
+        document.execCommand('copy');
+        copyLinkBtn.textContent = 'Copiado!';
+        copyLinkBtn.classList.remove('bg-green-600', 'hover:bg-green-700');
+        copyLinkBtn.classList.add('bg-gray-600', 'hover:bg-gray-700');
+        setTimeout(() => {
+            copyLinkBtn.textContent = 'Copiar';
+            copyLinkBtn.classList.remove('bg-gray-600', 'hover:bg-gray-700');
+            copyLinkBtn.classList.add('bg-green-600', 'hover:bg-green-700');
+        }, 2000);
+    });
+}
 
 let localStream;
 // Armazena as conexões peer para cada viewer { viewerId: RTCPeerConnection }
@@ -42,7 +67,7 @@ loadRtcConfig();
 // Ao conectar no servidor, registrar-se como Host
 socket.on('connect', () => {
     console.log('Conectado ao servidor.');
-    socket.emit('register-host');
+    socket.emit('register-host', roomId);
 });
 
 startBtn.addEventListener('click', async () => {
@@ -83,24 +108,6 @@ startBtn.addEventListener('click', async () => {
 });
 
 stopBtn.addEventListener('click', stopStream);
-
-rotateTokenBtn.addEventListener('click', () => {
-    socket.emit('rotate-token');
-});
-
-socket.on('token-rotated', (data) => {
-    console.log('Novo token recebido:', data.newToken);
-    if (tokenStatusText) {
-        tokenStatusText.textContent = `Novo link de transmissão gerado! (Caminho: ${data.watchPath})`;
-        tokenStatusText.classList.remove('hidden');
-    }
-    // Fechar e limpar peerConnections de viewers desconectados
-    for (let id in peerConnections) {
-        peerConnections[id].close();
-        delete peerConnections[id];
-    }
-    updateViewersUI();
-});
 
 function stopStream() {
     if (localStream) {
