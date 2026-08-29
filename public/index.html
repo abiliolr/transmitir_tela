@@ -31,14 +31,20 @@
                 </div>
             </div>
 
-            <button id="start-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded w-full sm:w-auto">
-                Selecionar e Transmitir Tela
-            </button>
-            <button id="stop-btn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded hidden w-full sm:w-auto">
-                Parar Transmissão
-            </button>
+            <div class="flex flex-wrap gap-2">
+                <button id="start-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded w-full sm:w-auto">
+                    Selecionar e Transmitir Tela
+                </button>
+                <button id="stop-btn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded hidden w-full sm:w-auto">
+                    Parar Transmissão
+                </button>
+                <button id="rotate-token-btn" class="bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 px-4 rounded w-full sm:w-auto">
+                    Gerar Novo Link
+                </button>
+            </div>
             
             <div id="status" class="mt-4 text-gray-400">Aguardando início da transmissão...</div>
+            <div id="token-status" class="mt-2 text-sm text-yellow-300 hidden"></div>
         </div>
 
         <div class="bg-black rounded-lg overflow-hidden border border-gray-700">
