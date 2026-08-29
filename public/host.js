@@ -143,6 +143,12 @@ startBtn.addEventListener('click', async () => {
             audio: true
         });
         
+        // Priorizar fluidez/FPS em vez de nitidez na captura
+        const videoTrack = localStream.getVideoTracks()[0];
+        if (videoTrack) {
+            videoTrack.contentHint = 'motion';
+        }
+
         localVideo.srcObject = localStream;
         
         startBtn.classList.add('hidden');
