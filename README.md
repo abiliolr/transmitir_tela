@@ -1,61 +1,74 @@
-# Instant Local Stream (SFU Multi-Room)
+# Instant Local Stream (Multi-Room P2P)
 
-Uma aplicação profissional e escalável de **transmissão de tela via navegador** utilizando a poderosa arquitetura **SFU (Selective Forwarding Unit)**.
+Uma aplicação profissional e escalável de **transmissão de tela P2P via navegador**. Diferente de soluções single-room locais, essa arquitetura foi refatorada para um modelo Multi-Room na nuvem, permitindo que vários "hosts" criem salas independentes com URLs dinâmicas para compartilhamento instantâneo.
 
-Diferente de soluções baseadas em malhas P2P diretas (que limitam a capacidade de upload do Host para cada novo espectador), este projeto utiliza o motor **Mediasoup** no backend para receber **apenas uma cópia** do vídeo do Host e distribuir ativamente para até 20 espectadores por sala, sem custos extras de serviços em nuvem gerenciados!
-
-O backend (Node.js + Express + Socket.io) gerencia a sinalização WebRTC de forma isolada, criando `Routers` e `Transports` dinamicamente com base no ID da sala (roomId).
+A transmissão de vídeo é feita diretamente do navegador do Host para o Viewer (Peer-to-Peer) utilizando **WebRTC**, sem passar o tráfego de vídeo pelo servidor. O backend em Express e Socket.io atua puramente como servidor de sinalização (Signaling Server) isolando a comunicação por `roomId`.
 
 ## 🚀 Como funciona
 
 1. Você acessa a página inicial e clica em **"Criar Nova Transmissão"**.
 2. O servidor gera um `roomId` aleatório e redireciona você para `/host/<roomId>`.
-3. Na página do Host, um link de convite é gerado automaticamente.
-4. O WebRTC (através da camada SFU do Mediasoup) conecta sua mídia ao servidor backend através de uma via de Produção (`Produce`).
-5. Você copia e envia o link para até 20 espectadores.
-6. Os espectadores entram e se conectam ao servidor (através da camada SFU) usando uma via de Consumo (`Consume`), baixando o vídeo diretamente do backend em vez do Host.
+3. Na página do Host, um link de convite é gerado automaticamente (ex: `/watch/<roomId>`).
+4. Você escolhe a qualidade, a taxa de quadros e seleciona a tela que deseja transmitir.
+5. Você copia e envia o link para até 8 espectadores.
+6. A conexão P2P (WebRTC) é estabelecida isoladamente dentro daquela sala!
 
 ## ⚙️ Stack e Tecnologias
 
-- **Node.js + Express** — Servidor HTTP, roteamento dinâmico.
-- **Mediasoup** — Motor C++ ultrarrápido para roteamento SFU (Multi-party video).
-- **Socket.IO** — Sinalização e handshakes DTLS.
-- **Tailwind CSS** — Interface UI Vanilla nativa e fluida.
+- **Node.js + Express** — Servidor HTTP, roteamento dinâmico e estáticos.
+- **Socket.IO** — Servidor de sinalização WebRTC isolado por Salas (Rooms).
+- **WebRTC** — Transmissão de mídia de baixa latência e P2P.
+- **Tailwind CSS** — Interface fluída e responsiva.
 
-## 🛠️ Como rodar o projeto localmente (ou Nuvem)
+## 🛠️ Como rodar o projeto localmente
 
-1. Tenha o [Node.js](https://nodejs.org/) instalado. **Aviso:** O Mediasoup compila C++ na instalação; se estiver no Windows, precisará do Python 3 e das ferramentas de compilação C/C++ do Visual Studio instaladas. No Linux e Mac costuma ser instantâneo.
-2. Clone o repositório e instale as dependências:
+1. Tenha o [Node.js](https://nodejs.org/) instalado.
+2. Clone o repositório e acesse a pasta.
+3. Instale as dependências:
    ```bash
    npm install
    ```
-3. Defina as variáveis de ambiente essenciais.
 4. Inicie o servidor:
    ```bash
    npm start
    ```
+5. Acesse `http://localhost:8080` no navegador.
 
 ---
 
-## 🔥 Variáveis de Ambiente e Firewall (.env)
+## 🌐 Configuração de STUN e TURN (Recomendado para Produção)
 
-Por ser uma arquitetura de servidor centralizado para o WebRTC (SFU), é **crucial** que você prepare sua rede/PaaS:
+O protocolo WebRTC precisa de servidores STUN para descobrir os IPs públicos dos navegadores. O projeto já vem pré-configurado com os servidores STUN públicos do Google, que resolvem a maioria das conexões.
 
-### 1. `MEDIASOUP_ANNOUNCED_IP`
-Você deve definir o **IP PÚBLICO** da sua máquina (VPS / EC2) para que o WebRTC saiba para onde enviar o vídeo.
-> Se você rodar localmente na sua máquina para testes, não é preciso definir nada (o servidor usará `127.0.0.1` de fallback).
+Porém, em redes corporativas ou operadoras com **NAT Simétrico** (firewalls rígidos), a conexão STUN falha e o vídeo do host não chega ao espectador (ou chega como um "slideshow"). Para resolver isso, é essencial configurar um **Servidor TURN** (que atua como um relay de vídeo nas nuvens).
 
-### 2. Abertura de Portas (Firewall)
-O Mediasoup usará as portas **2000 a 2020 (TCP e UDP)** para trafegar a mídia. Você DEVE permitir a entrada nessas portas nas regras de segurança da sua Nuvem (AWS Security Group, UFW, DigitalOcean Firewall, etc). O TCP já está forçado na aplicação para plataformas mais estritas (como Railway/Heroku).
+### Variáveis de Ambiente (.env)
 
-### 3. Configuração de TURN (Opcional, mas recomendado)
-Assim como a versão antiga P2P, redes altamente restritas (NAT simétrico corporativo) ainda precisam de STUN/TURN para se comunicar adequadamente com o seu servidor. Configure se achar necessário:
+O backend do `Instant Local Stream` está preparado para injetar suas credenciais TURN através das seguintes variáveis de ambiente:
 
-- `TURN_URL` = URL do seu servidor TURN
+- `TURN_URL` = URL do seu servidor TURN (ex: `turn:seu-servidor.metered.live:80`)
 - `TURN_USERNAME` = Nome de usuário
 - `TURN_CREDENTIAL` = Senha do servidor
 
+Basta criá-las no seu ambiente de hospedagem (Heroku, Vercel, Render, AWS, etc) ou usar um pacote como o `dotenv` localmente.
+
+### Como criar uma conta GRATUITA no Metered Video e obter um TURN
+
+Para facilitar os testes, recomendamos utilizar o serviço gratuito [Metered Video](https://www.metered.ca/stun-turn).
+
+**Passo a passo:**
+
+1. Acesse [https://www.metered.ca/stun-turn](https://www.metered.ca/stun-turn) e clique em **"Get Free TURN Server"** (ou crie sua conta).
+2. Preencha seus dados de cadastro e confirme seu e-mail.
+3. Ao logar no painel de controle (Dashboard), procure no menu lateral esquerdo por **"TURN Servers"** ou **"Credentials"**.
+4. Você verá uma tela com os detalhes prontos para uso. O painel geralmente exibe as credenciais organizadas assim:
+   - **TURN URLs** (Você terá portas 80, 443 TCP/UDP. Ex: `turn:abc.metered.live:80`)
+   - **Username**
+   - **Credential** (Senha)
+5. Copie esses três valores e coloque nas variáveis de ambiente `TURN_URL`, `TURN_USERNAME` e `TURN_CREDENTIAL` do seu projeto.
+6. Pronto! Agora qualquer espectador com rede restrita conseguirá receber a transmissão com fluidez e qualidade.
+
 ## ⚠️ Limitações e Observações
 
-- **Limite de Viewers:** Fixado em 20 espectadores por sala. (Pode ser facilmente alterado no `server.js`). Esse limite existe apenas para não estrangular a CPU da sua instância barata de Nuvem.
-- Requer acesso a dispositivos de captura de mídia. O Host não funciona adequadamente na maioria dos navegadores de celulares Android/iOS nativos (necessita ser desktop ou Chrome).
+- **Limite de Viewers:** Fixado em 8 espectadores por sala para preservar o upload do host, já que é P2P (cada espectador extra multiplica a banda necessária de upload).
+- Requer acesso a dispositivos de captura de mídia (Não suportado nativamente na maioria dos navegadores mobile para o perfil de Host).
