@@ -1,0 +1,11 @@
+
+> instant-local-stream@1.0.0 start
+> node server.js
+
+Servidor rodando na porta 8080
+Worker PID: 403434
+Nova conexão Socket: G5I9oRy8todVV612AAAB
+Host registrado na sala 81ca213a: G5I9oRy8todVV612AAAB
+Nova conexão Socket: jJlUXDMiDaScnfATAAAD
+Viewer conectado na sala 81ca213a: jJlUXDMiDaScnfATAAAD. Total: 1
+Host da sala 81ca213a desconectado.

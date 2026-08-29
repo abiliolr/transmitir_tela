@@ -2,27 +2,25 @@ const socket = io();
 const remoteVideo = document.getElementById('remote-video');
 const statusText = document.getElementById('status');
 
-let peerConnection;
-
-// Extrair roomId da URL
 const pathParts = window.location.pathname.split('/');
 const roomId = pathParts[pathParts.length - 1];
 
-// Configuração de STUN/TURN carregada dinamicamente
+// =====================================
+// MEDIASOUP SFU VIEWER STATE
+// =====================================
+let device;
+let recvTransport;
+let consumers = [];
+const mediaStream = new MediaStream();
+remoteVideo.srcObject = mediaStream; // Prepara a stream receptora
+
 let rtcConfig = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' },
         { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' },
-        // Estrutura para adicionar um servidor TURN hardcoded (apenas para debug/teste local).
-        // Em produção, a recomendação é passar isso pelo backend usando variáveis de ambiente.
-        // {
-        //     urls: "turn:SEU_SERVIDOR_TURN:PORTA",
-        //     username: "SEU_USERNAME",
-        //     credential: "SEU_PASSWORD"
-        // }
+        { urls: 'stun:stun4.l.google.com:19302' }
     ]
 };
 
@@ -36,15 +34,71 @@ async function loadRtcConfig() {
             }
         }
     } catch (e) {
-        console.warn('Não foi possível carregar rtcConfig do servidor, usando fallback padrão:', e);
+        console.warn('Não foi possível carregar rtcConfig do servidor:', e);
     }
 }
-loadRtcConfig();
 
-socket.on('connect', () => {
-    statusText.textContent = 'Autenticando na sala...';
+socket.on('connect', async () => {
+    statusText.textContent = 'Autenticando na sala e buscando servidor...';
+    await loadRtcConfig();
+
     // Avisa o servidor que quer entrar passando o roomId
-    socket.emit('join-room', roomId);
+    socket.emit('join-room', roomId, async (data) => {
+        if (data.error) {
+            statusText.textContent = `Erro: ${data.error}`;
+            statusText.className = 'text-red-500 font-bold';
+            return;
+        }
+
+        try {
+            // 1. Instanciar o Device Mediasoup
+            device = new mediasoupClient.Device();
+            await device.load({ routerRtpCapabilities: data.rtpCapabilities });
+            console.log('Mediasoup Device loaded for consumption.');
+
+            statusText.textContent = 'Estabelecendo conexão com o servidor...';
+            statusText.className = 'text-blue-400';
+
+            // 2. Criar transportadora para Recebimento (RECV)
+            socket.emit('create-viewer-transport', {}, async (transportData) => {
+                if (transportData.error) {
+                    console.error(transportData.error);
+                    return;
+                }
+
+                // Injeta os iceServers (STUN/TURN) no transport
+                const transportParams = {
+                    ...transportData.params,
+                    iceServers: rtcConfig.iceServers
+                };
+
+                recvTransport = device.createRecvTransport(transportParams);
+
+                // 3. Handshake DTLS
+                recvTransport.on('connect', ({ dtlsParameters }, callback, errback) => {
+                    socket.emit('connect-viewer-transport', { dtlsParameters }, (res) => {
+                        if (res && res.error) errback(new Error(res.error));
+                        else callback();
+                    });
+                });
+
+                // Se ao entrar na sala já tiver producers (Host já transmitindo), consumi-los
+                if (data.producers && data.producers.length > 0) {
+                    for (const producer of data.producers) {
+                        await consumeTrack(producer.id);
+                    }
+                } else {
+                    statusText.textContent = 'Aguardando o host iniciar a transmissão...';
+                    statusText.className = 'text-yellow-400';
+                }
+            });
+
+        } catch (err) {
+            console.error('Falha ao instanciar Viewer:', err);
+            statusText.textContent = 'Falha ao instanciar Viewer.';
+            statusText.className = 'text-red-500';
+        }
+    });
 });
 
 // Em caso de erro na entrada da sala
@@ -53,60 +107,31 @@ socket.on('error', (message) => {
     statusText.className = 'text-red-500 font-bold';
 });
 
-// Quando o Host enviar a Oferta
-socket.on('offer', async (hostId, offer) => {
-    statusText.textContent = 'Estabelecendo conexão P2P (Recebendo Vídeo)...';
-    statusText.className = 'text-blue-400';
-
-    peerConnection = new RTCPeerConnection(rtcConfig);
-
-    // Quando receber a track de mídia do Host
-    peerConnection.ontrack = (event) => {
-        if (remoteVideo.srcObject !== event.streams[0]) {
-            remoteVideo.srcObject = event.streams[0];
-            statusText.textContent = 'Transmissão ao vivo.';
-            statusText.className = 'text-green-400';
-        }
-    };
-
-    // Enviar ICE Candidates para o Host
-    peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-            socket.emit('ice-candidate', hostId, event.candidate);
-        }
-    };
-
-    // Processar a Oferta e criar a Resposta
-    try {
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await peerConnection.createAnswer();
-        await peerConnection.setLocalDescription(answer);
-        socket.emit('answer', hostId, answer);
-    } catch (error) {
-        console.error('Erro ao processar oferta:', error);
-        statusText.textContent = 'Falha ao processar vídeo.';
-        statusText.className = 'text-red-500';
+// Se o host criar uma track nova enquanto o Viewer está conectado
+socket.on('new-producer', async ({ producerId }) => {
+    if (device && recvTransport) {
+        await consumeTrack(producerId);
     }
 });
 
-// Quando receber ICE Candidate do Host
-socket.on('ice-candidate', async (hostId, candidate) => {
-    if (peerConnection) {
-        try {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-        } catch (e) {
-            console.error('Erro ao adicionar ICE candidate:', e);
-        }
+// Se o Host fechar a track/producer
+socket.on('producer-closed', ({ producerId }) => {
+    const idx = consumers.findIndex(c => c.producerId === producerId);
+    if (idx !== -1) {
+        consumers[idx].close();
+        consumers.splice(idx, 1);
     }
 });
 
-// Se o host cair
+// Se o host cair/fechar a aba
 socket.on('host-disconnected', () => {
     statusText.textContent = 'Host desconectado. A transmissão foi encerrada.';
     statusText.className = 'text-gray-400';
-    if (peerConnection) {
-        peerConnection.close();
-    }
+
+    // Limpar tudo
+    consumers.forEach(c => c.close());
+    consumers = [];
+    if (recvTransport) recvTransport.close();
     remoteVideo.srcObject = null;
 });
 
@@ -114,3 +139,35 @@ socket.on('disconnect', () => {
     statusText.textContent = 'Desconectado do servidor.';
     statusText.className = 'text-red-500';
 });
+
+
+async function consumeTrack(producerId) {
+    statusText.textContent = 'Recebendo Mídia...';
+    statusText.className = 'text-blue-400';
+
+    socket.emit('consume', {
+        producerId: producerId,
+        rtpCapabilities: device.rtpCapabilities
+    }, async (data) => {
+        if (data.error) {
+            console.error(data.error);
+            return;
+        }
+
+        const consumer = await recvTransport.consume({
+            id: data.params.id,
+            producerId: data.params.producerId,
+            kind: data.params.kind,
+            rtpParameters: data.params.rtpParameters
+        });
+
+        consumers.push(consumer);
+        mediaStream.addTrack(consumer.track);
+
+        // Resume o consumo (o mediasoup envia pausado nativamente para evitar drop de pacotes)
+        socket.emit('resume-consumer', { consumerId: consumer.id }, () => {
+            statusText.textContent = 'Transmissão ao vivo.';
+            statusText.className = 'text-green-400';
+        });
+    });
+}
