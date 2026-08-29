@@ -12,7 +12,17 @@ const roomId = pathParts[pathParts.length - 1];
 let rtcConfig = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' },
+        // Estrutura para adicionar um servidor TURN hardcoded (apenas para debug/teste local).
+        // Em produção, a recomendação é passar isso pelo backend usando variáveis de ambiente.
+        // {
+        //     urls: "turn:SEU_SERVIDOR_TURN:PORTA",
+        //     username: "SEU_USERNAME",
+        //     credential: "SEU_PASSWORD"
+        // }
     ]
 };
 

@@ -1,89 +1,74 @@
-# transmitir_tela
+# Instant Local Stream (Multi-Room P2P)
 
-Aplicação simples de **transmissão de tela P2P via navegador**, criada como alternativa caseira ao compartilhamento de tela do Discord. Um "host" compartilha a própria tela pelo navegador e qualquer pessoa com o link consegue assistir ao vivo, sem precisar instalar nada.
+Uma aplicação profissional e escalável de **transmissão de tela P2P via navegador**. Diferente de soluções single-room locais, essa arquitetura foi refatorada para um modelo Multi-Room na nuvem, permitindo que vários "hosts" criem salas independentes com URLs dinâmicas para compartilhamento instantâneo.
 
-> Projeto pessoal, ainda em teste.
+A transmissão de vídeo é feita diretamente do navegador do Host para o Viewer (Peer-to-Peer) utilizando **WebRTC**, sem passar o tráfego de vídeo pelo servidor. O backend em Express e Socket.io atua puramente como servidor de sinalização (Signaling Server) isolando a comunicação por `roomId`.
 
-## Como funciona
+## 🚀 Como funciona
 
-1. Você roda o servidor local (`node server.js`).
-2. O servidor sobe automaticamente um **túnel Cloudflare** (`cloudflared`), gerando uma URL pública para o seu `localhost`.
-3. Um **token aleatório** é gerado a cada execução e vira parte do link (`/watch/<token>`) — funciona como uma senha de acesso à transmissão.
-4. O servidor tenta **encurtar o link** automaticamente via TinyURL (se falhar, mostra o link completo mesmo).
-5. Você abre a página inicial (host), clica em "Selecionar e Transmitir Tela" e escolhe a janela/tela a compartilhar.
-6. Quem receber o link acessa `/watch/<token>` e assiste o vídeo, que é transmitido **direto do seu navegador para o dele via WebRTC** (P2P) — o servidor só ajuda a estabelecer essa conexão (signaling via Socket.IO), o vídeo não passa por ele.
+1. Você acessa a página inicial e clica em **"Criar Nova Transmissão"**.
+2. O servidor gera um `roomId` aleatório e redireciona você para `/host/<roomId>`.
+3. Na página do Host, um link de convite é gerado automaticamente (ex: `/watch/<roomId>`).
+4. Você escolhe a qualidade, a taxa de quadros e seleciona a tela que deseja transmitir.
+5. Você copia e envia o link para até 8 espectadores.
+6. A conexão P2P (WebRTC) é estabelecida isoladamente dentro daquela sala!
 
-## Recursos
+## ⚙️ Stack e Tecnologias
 
-- Escolha de **resolução** (720p, 1080p, 1440p) e **FPS** (30/60) antes de começar a transmitir.
-- Suporte a **múltiplos espectadores** simultâneos (até 8).
-- Lista em tempo real de quem está assistindo.
-- Reconexão/aviso automático quando o host encerra a transmissão.
-- Acesso protegido por token — sem o link correto, ninguém entra na sala.
+- **Node.js + Express** — Servidor HTTP, roteamento dinâmico e estáticos.
+- **Socket.IO** — Servidor de sinalização WebRTC isolado por Salas (Rooms).
+- **WebRTC** — Transmissão de mídia de baixa latência e P2P.
+- **Tailwind CSS** — Interface fluída e responsiva.
 
-## Requisitos
+## 🛠️ Como rodar o projeto localmente
 
-- [Node.js](https://nodejs.org/) instalado.
-- Um executável do **[cloudflared](https://github.com/cloudflare/cloudflared/releases)** na mesma pasta do `server.js` (ou disponível no `PATH` do sistema), pois o servidor o inicia automaticamente para criar o túnel público.
+1. Tenha o [Node.js](https://nodejs.org/) instalado.
+2. Clone o repositório e acesse a pasta.
+3. Instale as dependências:
+   ```bash
+   npm install
+   ```
+4. Inicie o servidor:
+   ```bash
+   npm start
+   ```
+5. Acesse `http://localhost:8080` no navegador.
 
-## Instalação
+---
 
-```bash
-git clone https://github.com/abiliolr/transmitir_tela.git
-cd transmitir_tela
-npm install
-```
+## 🌐 Configuração de STUN e TURN (Recomendado para Produção)
 
-Baixe o `cloudflared` (executável correspondente ao seu sistema operacional) e coloque-o na raiz do projeto, ao lado do `server.js`.
+O protocolo WebRTC precisa de servidores STUN para descobrir os IPs públicos dos navegadores. O projeto já vem pré-configurado com os servidores STUN públicos do Google, que resolvem a maioria das conexões.
 
-## Uso
+Porém, em redes corporativas ou operadoras com **NAT Simétrico** (firewalls rígidos), a conexão STUN falha e o vídeo do host não chega ao espectador (ou chega como um "slideshow"). Para resolver isso, é essencial configurar um **Servidor TURN** (que atua como um relay de vídeo nas nuvens).
 
-```bash
-npm start
-```
+### Variáveis de Ambiente (.env)
 
-O terminal vai mostrar algo assim:
+O backend do `Instant Local Stream` está preparado para injetar suas credenciais TURN através das seguintes variáveis de ambiente:
 
-```
-Servidor local rodando em http://localhost:8080
-Iniciando Cloudflare Tunnel...
-========================================================
-TUNEL CRIADO E ENCURTADO COM SUCESSO!
-Link para enviar aos seus amigos: https://tinyurl.com/xxxxxxx
-========================================================
-```
+- `TURN_URL` = URL do seu servidor TURN (ex: `turn:seu-servidor.metered.live:80`)
+- `TURN_USERNAME` = Nome de usuário
+- `TURN_CREDENTIAL` = Senha do servidor
 
-- Abra `http://localhost:8080` no seu navegador (é a tela do host) e clique em **"Selecionar e Transmitir Tela"**.
-- Envie o link gerado no terminal para quem for assistir.
+Basta criá-las no seu ambiente de hospedagem (Heroku, Vercel, Render, AWS, etc) ou usar um pacote como o `dotenv` localmente.
 
-## Estrutura do projeto
+### Como criar uma conta GRATUITA no Metered Video e obter um TURN
 
-```
-.
-├── server.js          # Servidor Express + Socket.IO (signaling) + automação do túnel Cloudflare
-├── public/
-│   ├── index.html      # Página do host
-│   ├── host.js          # Captura de tela e lógica WebRTC do host
-│   ├── watch.html       # Página do espectador
-│   └── viewer.js         # Lógica WebRTC do espectador
-├── package.json
-└── package-lock.json
-```
+Para facilitar os testes, recomendamos utilizar o serviço gratuito [Metered Video](https://www.metered.ca/stun-turn).
 
-## Stack
+**Passo a passo:**
 
-- [Express](https://expressjs.com/) — servidor HTTP e arquivos estáticos
-- [Socket.IO](https://socket.io/) — signaling do WebRTC (troca de offers, answers e ICE candidates)
-- [WebRTC](https://webrtc.org/) — transmissão de vídeo/áudio P2P entre host e espectadores
-- [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) — exposição do servidor local na internet sem configurar portas/roteador
+1. Acesse [https://www.metered.ca/stun-turn](https://www.metered.ca/stun-turn) e clique em **"Get Free TURN Server"** (ou crie sua conta).
+2. Preencha seus dados de cadastro e confirme seu e-mail.
+3. Ao logar no painel de controle (Dashboard), procure no menu lateral esquerdo por **"TURN Servers"** ou **"Credentials"**.
+4. Você verá uma tela com os detalhes prontos para uso. O painel geralmente exibe as credenciais organizadas assim:
+   - **TURN URLs** (Você terá portas 80, 443 TCP/UDP. Ex: `turn:abc.metered.live:80`)
+   - **Username**
+   - **Credential** (Senha)
+5. Copie esses três valores e coloque nas variáveis de ambiente `TURN_URL`, `TURN_USERNAME` e `TURN_CREDENTIAL` do seu projeto.
+6. Pronto! Agora qualquer espectador com rede restrita conseguirá receber a transmissão com fluidez e qualidade.
 
-## Limitações conhecidas
+## ⚠️ Limitações e Observações
 
-- Máximo de 8 espectadores por transmissão (limite fixo no código).
-- Depende do encurtador TinyURL; se o serviço bloquear ou estiver fora do ar, o link completo é usado como alternativa.
-- Não funciona em navegadores/dispositivos que não suportam `getDisplayMedia` (ex.: a maioria dos navegadores mobile).
-- Projeto ainda em fase de testes — pode ter bugs e mudanças de comportamento entre commits.
-
-## Aviso
-
-Este projeto sobe um túnel público apontando para a sua máquina. Trate o link/token gerado como uma informação sensível e evite deixá-lo exposto publicamente.
+- **Limite de Viewers:** Fixado em 8 espectadores por sala para preservar o upload do host, já que é P2P (cada espectador extra multiplica a banda necessária de upload).
+- Requer acesso a dispositivos de captura de mídia (Não suportado nativamente na maioria dos navegadores mobile para o perfil de Host).

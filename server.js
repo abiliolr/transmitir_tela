@@ -19,12 +19,19 @@ app.use(express.static('public', { index: false }));
 
 // Rota de configuração WebRTC (STUN / TURN)
 app.get('/api/rtc-config', (req, res) => {
+    // Lista de servidores STUN públicos, úteis para conexões básicas
     const iceServers = [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' }
     ];
 
+    // Se variáveis de ambiente para o TURN forem fornecidas, injeta o TURN na configuração.
+    // Isso é essencial para usuários sob NATs simétricos/restritos onde o STUN falha.
     if (process.env.TURN_URL) {
+        // Exemplo: process.env.TURN_URL pode conter múltiplas URLs se separadas ou apenas uma
         const turnConfig = {
             urls: process.env.TURN_URL
         };
